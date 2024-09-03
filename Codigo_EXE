@@ -1,0 +1,204 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, simpledialog, scrolledtext
+
+def read_file(file_path):
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+    return [line.replace(" ", "").strip() for line in lines]
+
+def assign_ids_by_pairs(start_id, lines):
+    start_id_int = int(start_id, 16)  # Convertir el ID inicial de hexadecimal a decimal
+    ids = {}
+    current_id = start_id_int
+
+    for line_num, line in enumerate(lines):
+        for i in range(0, len(line), 2):  # Iterar sobre pares de caracteres
+            pair = line[i:i+2]
+            ids[current_id] = (line_num + 1, i // 2 + 1, pair)  # Almacenar la línea, la posición del par y el par
+            current_id += 1
+
+    return ids
+
+def calculate_stack_ranges(id_reference, stack_size, ids):
+    start_id_dec = int(id_reference, 16)  # Convertir el ID de referencia a decimal
+    id_keys = list(ids.keys())
+
+    try:
+        start_idx = id_keys.index(start_id_dec)
+    except ValueError:
+        raise ValueError(f"ID de referencia {id_reference.upper()} no encontrado en el archivo.")
+
+    end_idx = start_idx + stack_size - 1  # Calcular el índice final basado en el tamaño del stack
+    if end_idx >= len(id_keys):
+        raise ValueError("El tamaño del stack excede el número de IDs disponibles.")
+
+    start_id = id_keys[start_idx]
+    end_id = id_keys[end_idx]
+
+    stacks = [(start_id, end_id, stack_size)]
+    return stacks
+
+def validate_lines(lines, ids, stacks):
+    errors = []
+    stack_pairs_to_skip = set()
+
+    # Registrar los pares a omitir
+    for stack in stacks:
+        start_id, end_id, _ = stack
+        start_idx = list(ids.keys()).index(start_id)
+        end_idx = list(ids.keys()).index(end_id)
+
+        stack_pairs_to_skip.update(range(start_idx, end_idx + 1))
+
+    # Validar las líneas, omitiendo los pares especificados
+    for idx, (id_key, (line_num, pair_num, pair)) in enumerate(ids.items()):
+        if idx not in stack_pairs_to_skip:
+            if pair != "00":
+                errors.append((id_key, line_num, pair_num, pair))
+
+    return errors
+
+def save_ids_to_file(ids, file_path):
+    output_file = file_path.replace(".txt", "_ids_asignados.txt")
+    with open(output_file, 'w') as file:
+        for id_hex, (line_num, pair_num, pair) in ids.items():
+            file.write(f"ID: {hex(id_hex).upper()}, Línea {line_num}, Par {pair_num}: {pair}\n")
+    return output_file
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("ID y Stack Validator")
+        
+        self.file_path = ""
+        self.lines = []
+        self.ids = {}
+        self.stacks = []
+
+        # Widgets de la GUI
+        self.label = tk.Label(root, text="Seleccione un archivo txt:")
+        self.label.pack(pady=10)
+
+        self.file_button = tk.Button(root, text="Abrir Archivo", command=self.open_file)
+        self.file_button.pack(pady=10)
+
+        self.id_frame = tk.Frame(root)
+        self.id_frame.pack(pady=10)
+
+        self.start_id_label = tk.Label(self.id_frame, text="ID de Inicio (hexadecimal):")
+        self.start_id_label.grid(row=0, column=0)
+
+        self.start_id_entry = tk.Entry(self.id_frame)
+        self.start_id_entry.grid(row=0, column=1, padx=5)
+
+        self.assign_button = tk.Button(root, text="Asignar IDs", command=self.assign_ids_to_lines)
+        self.assign_button.pack(pady=10)
+
+        self.stack_button = tk.Button(root, text="Definir Stacks", command=self.define_stacks)
+        self.stack_button.pack(pady=10)
+
+        self.validate_button = tk.Button(root, text="Validar Líneas", command=self.validate)
+        self.validate_button.pack(pady=10)
+
+    def open_file(self):
+        self.file_path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
+        if self.file_path:
+            self.lines = read_file(self.file_path)
+            messagebox.showinfo("Archivo Cargado", "Archivo cargado con éxito.")
+        else:
+            messagebox.showwarning("Advertencia", "No se seleccionó ningún archivo.")
+
+    def assign_ids_to_lines(self):
+        if not self.lines:
+            messagebox.showwarning("Advertencia", "Primero debe seleccionar un archivo.")
+            return
+
+        try:
+            start_id = self.start_id_entry.get()
+            self.ids = assign_ids_by_pairs(start_id, self.lines)
+            output_file = save_ids_to_file(self.ids, self.file_path)
+            messagebox.showinfo("IDs Asignados", f"IDs asignados con éxito. Revisa el archivo: {output_file}")
+        except ValueError:
+            messagebox.showerror("Error", "El ID inicial debe ser un número hexadecimal válido.")
+
+    def define_stacks(self):
+        if not self.ids:
+            messagebox.showwarning("Advertencia", "Debe asignar IDs antes de definir stacks.")
+            return
+
+        stack_count = simpledialog.askstring("Cantidad de Stacks", "¿Cuántos stacks quiere definir?")
+        if stack_count is None:
+            return
+
+        self.stacks = []
+        try:
+            stack_count = int(stack_count, 16)  # Convertir el número de stacks a decimal si está en hexadecimal
+            for _ in range(stack_count):
+                id_reference = simpledialog.askstring("ID de Referencia (hexadecimal)", "Ingrese el ID de referencia para el stack:")
+                stack_size = simpledialog.askstring("Tamaño del Stack", "Ingrese el tamaño del stack (en pares):")
+                if id_reference is not None and stack_size is not None:
+                    stack_size_dec = int(stack_size)
+                    stack = calculate_stack_ranges(id_reference, stack_size_dec, self.ids)
+                    self.stacks.extend(stack)
+                    
+                    # Mostrar detalles del stack
+                    start_id, end_id, size = stack[0]
+                    print(f"Definido Stack desde ID {hex(start_id).upper()} hasta ID {hex(end_id).upper()} omitiendo {size} pares.")
+                else:
+                    messagebox.showwarning("Advertencia", "Entrada de stack cancelada.")
+                    return
+
+            messagebox.showinfo("Stacks Definidos", "Todos los stacks se definieron con éxito.")
+        except ValueError as e:
+            messagebox.showerror("Error", str(e))
+
+    def validate(self):
+        if not self.stacks:
+            messagebox.showwarning("Advertencia", "Debe definir los stacks antes de validar.")
+            return
+
+        errors = validate_lines(self.lines, self.ids, self.stacks)
+
+        self.show_error_report(errors)
+
+    def show_error_report(self, errors):
+        report_window = tk.Toplevel(self.root)
+        report_window.title("Reporte de Errores")
+
+        # Crear un ScrolledText para mostrar el reporte
+        text_area = scrolledtext.ScrolledText(report_window, width=80, height=20, wrap=tk.WORD)
+        text_area.pack(padx=10, pady=10)
+
+        # Agregar los stacks al reporte
+        text_area.insert(tk.END, "Stacks Definidos:\n")
+        for start_id, end_id, size in self.stacks:
+            text_area.insert(tk.END, f"Stack desde ID {hex(start_id).upper()} hasta ID {hex(end_id).upper()} omitiendo {size} pares.\n")
+        text_area.insert(tk.END, "\n")
+
+        if not errors:
+            # Si no hay errores, mostrar "PASSED" en verde
+            text_area.insert(tk.END, "PASSED", "success")
+        
+            
+        else:
+            # Agregar los errores al reporte
+            
+            for error in errors:
+                id_hex = hex(error[0]).upper()
+                line_num = error[1]
+                pair_num = error[2]
+                pair = error[3]
+                text_area.insert(tk.END, f"ID {id_hex} (Línea {line_num}, Par {pair_num}): Error encontrado - {pair}\n")
+            text_area.insert(tk.END,"FAILED","failure")
+
+        # Configurar estilo de texto para "PASSED"
+        text_area.tag_configure("success", foreground="green")
+        text_area.tag_configure("failure", foreground="red")
+          
+        # Deshabilitar la edición del texto en el ScrolledText
+        text_area.config(state=tk.DISABLED)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
