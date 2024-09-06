@@ -1,0 +1,259 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, simpledialog, scrolledtext
+from PIL import Image, ImageTk
+
+# Funciones para manejo de archivos y validación
+def read_file(file_path):
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+    return [line.strip() for line in lines]
+
+def assign_ids_by_pairs(start_id, lines):
+    start_id_int = int(start_id, 16)  # Convertir el ID inicial de hexadecimal a decimal
+    ids = {}
+    current_id = start_id_int
+    
+    for line_num, line in enumerate(lines):
+        for i in range(0, len(line), 2):  # Iterar sobre pares de caracteres
+            pair = line[i:i+2]
+            ids[current_id] = (line_num + 1, i // 2 + 1, pair)  # Almacenar la línea, la posición del par y el par
+            current_id += 1
+            
+    return ids
+
+def calculate_stack_ranges(id_reference, stack_size, ids):
+    start_id_dec = int(id_reference, 16)  # Convertir el ID de referencia a decimal
+    if start_id_dec not in ids:
+        raise ValueError(f"ID de referencia {id_reference.upper()} no encontrado en el archivo.")
+    
+    start_idx = list(ids.keys()).index(start_id_dec)  # Obtener el índice desde la lista de IDs
+    end_idx = start_idx + stack_size - 1  # Calcular el índice final basado en el tamaño del stack
+
+    id_keys = list(ids.keys())
+    start_id = id_keys[start_idx]
+    end_id = id_keys[end_idx]
+
+    stacks = [(start_id, end_id, stack_size)]
+    return stacks
+
+def validate_lines(lines, ids, stacks):
+    errors = []
+    stack_pairs_to_skip = {}
+
+    # Registrar los pares a omitir
+    for stack in stacks:
+        start_id, end_id, stack_size = stack
+        start_idx = list(ids.keys()).index(start_id)
+        end_idx = list(ids.keys()).index(end_id)
+
+        for idx in range(start_idx, end_idx + 1):
+            stack_pairs_to_skip[idx] = ids[list(ids.keys())[idx]]
+
+    # Validar las líneas, omitiendo solo los pares especificados
+    for idx, (id_key, (line_num, pair_num, pair)) in enumerate(ids.items()):
+        if idx not in stack_pairs_to_skip:
+            if pair != "00":
+                errors.append((id_key, line_num, pair_num, pair))
+
+    return errors
+
+def save_ids_to_file(ids, file_path):
+    output_file = file_path.replace(".txt", "_ids_asignados.txt")
+    with open(output_file, 'w') as file:
+        for id_hex, (line_num, pair_num, pair) in ids.items():
+            file.write(f"ID: {hex(id_hex).upper()}, Línea {line_num}, Par {pair_num}: {pair}\n")
+    return output_file
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Comparador y Validador")
+
+        # Set the application icon
+        try:
+            ico = Image.open('logofinal.png')
+            photo = ImageTk.PhotoImage(ico)
+            root.wm_iconphoto(False, photo)
+        except FileNotFoundError:
+            print("Icon file not found. Please ensure 'logofinal.png' is in the working directory.")
+
+        # Configurar el color de fondo de la ventana principal
+        self.root.configure(bg="gray90")
+        
+        # Configuración del Canvas con fondo negro
+        self.canvas = tk.Canvas(root, width=250, height=250, bg="gray90", highlightthickness=0)
+        self.canvas.pack(padx=20, pady=20)
+        
+        # Parámetros del círculo
+        self.radius = 60
+        self.center_x = 125
+        self.center_y = 125
+        self.angle = 0
+        self.arc_step = 4  # Velocidad de animación
+        self.direction = 1 
+        self.colors = ["DarkGoldenrod3"] * 5  # Colores del arco
+        self.current_color_index = 0
+
+        self.create_neon_arc()
+        self.update_animation()
+        
+        # Widgets de la GUI para manejo de archivos y validación
+        self.label = tk.Label(root, text="Seleccione un archivo txt:", fg="Black", bg="gray90")
+        self.label.pack(pady=10)
+
+        self.file_button = tk.Button(root, text="Abrir Archivo", command=self.open_file, fg="Black", bg="gray90", bd=1, relief=tk.RAISED)
+        self.file_button.pack(pady=10)
+
+        self.id_frame = tk.Frame(root, bg="gray90")
+        self.id_frame.pack(pady=10)
+
+        self.start_id_label = tk.Label(self.id_frame, text="ID de Inicio (hexadecimal):", fg="Black", bg="gray90")
+        self.start_id_label.grid(row=0, column=0)
+
+        self.start_id_entry = tk.Entry(self.id_frame)
+        self.start_id_entry.grid(row=0, column=1, padx=5)
+
+        self.assign_button = tk.Button(root, text="Asignar IDs", command=self.assign_ids_to_lines, fg="Black", bg="gray90", bd=1, relief=tk.RAISED)
+        self.assign_button.pack(pady=10)
+
+        self.stack_button = tk.Button(root, text="Definir Stacks", command=self.define_stacks, fg="Black", bg="gray90", bd=1, relief=tk.RAISED)
+        self.stack_button.pack(pady=10)
+
+        self.validate_button = tk.Button(root, text="Validar Líneas", command=self.validate, fg="Black", bg="gray90", bd=1, relief=tk.RAISED)
+        self.validate_button.pack(pady=10)
+
+        # Variables de estado
+        self.file_path = ""
+        self.lines = []
+        self.ids = {}
+        self.stacks = []
+
+    def create_neon_arc(self):
+        """Crea un arco con efecto neón en el canvas con simulación 3D."""
+        self.arc_ids = []
+        num_layers = 4
+        for i in range(num_layers):
+            offset = i * 2
+            width = max(1, 5 - offset)  # Evitar ancho negativo o cero
+            color = self.colors[i % len(self.colors)]  # Usar color de la lista
+            self.arc_ids.append(self.canvas.create_arc(
+                self.center_x - (self.radius + offset), self.center_y - (self.radius + offset),
+                self.center_x + (self.radius + offset), self.center_y + (self.radius + offset),
+                start=0, extent=360,
+                outline=color, width=width, style=tk.ARC
+            ))
+
+    def update_animation(self):
+        """Actualiza el arco del círculo para crear una animación 3D que se llena y vacía en bucle."""
+        if self.direction == 1:
+            self.angle += self.arc_step
+            if self.angle >= 360:
+                self.angle = 360
+                self.direction = -1  # Cambia la dirección para vaciar
+        else:
+            self.angle -= self.arc_step
+            if self.angle <= 0:
+                self.angle = 0
+                self.direction = 1  # Cambia la dirección para llenar nuevamente
+
+        # Cambia el color del arco gradualmente
+        self.current_color_index = (self.current_color_index + 1) % len(self.colors)
+        color = self.colors[self.current_color_index]
+
+        # Actualiza los arcos para simular el efecto 3D
+        for i, arc_id in enumerate(self.arc_ids):
+            width = max(1, 5 - i * 2)  # Ajuste en el grosor del arco
+            self.canvas.itemconfig(arc_id, extent=self.angle + i * 10, outline=color, width=width)
+        
+        # Llama a update_animation nuevamente después de 10 ms para mayor fluidez
+        self.root.after(10, self.update_animation)
+
+    def open_file(self):
+        self.file_path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
+        if self.file_path:
+            self.lines = read_file(self.file_path)
+            messagebox.showinfo("Archivo Cargado", "Archivo cargado con éxito.")
+        else:
+            messagebox.showwarning("Advertencia", "No se seleccionó ningún archivo.")
+
+    def assign_ids_to_lines(self):
+        if not self.lines:
+            messagebox.showwarning("Advertencia", "Primero debe seleccionar un archivo.")
+            return
+
+        try:
+            start_id = self.start_id_entry.get()
+            self.ids = assign_ids_by_pairs(start_id, self.lines)
+            output_file = save_ids_to_file(self.ids, self.file_path)
+            messagebox.showinfo("IDs Asignados", f"IDs asignados con éxito. Revisa el archivo: {output_file}")
+        except ValueError:
+            messagebox.showerror("Error", "El ID inicial debe ser un número hexadecimal válido.")
+
+    def define_stacks(self):
+        if not self.ids:
+            messagebox.showwarning("Advertencia", "Debe asignar IDs antes de definir stacks.")
+            return
+
+        stack_count = simpledialog.askstring("Cantidad de Stacks", "¿Cuántos stacks quiere definir?")
+        if stack_count is None:
+            return
+
+        self.stacks = []
+        for _ in range(int(stack_count, 16)):  # Convertir el número de stacks a decimal si está en hexadecimal
+            id_reference = simpledialog.askstring("ID de Referencia (hexadecimal)", "Ingrese el ID de referencia para el stack:")
+            stack_size = simpledialog.askstring("Tamaño del Stack", "Ingrese el tamaño del stack (en pares):")
+            if id_reference is not None and stack_size is not None:
+                stack_size_dec = int(stack_size)
+                try:
+                    stack = calculate_stack_ranges(id_reference, stack_size_dec, self.ids)
+                    self.stacks.extend(stack)
+                    
+                    # Mostrar detalles del stack
+                    start_id, end_id, size = stack[0]
+                    print(f"Definido Stack desde ID {hex(start_id).upper()} hasta ID {hex(end_id).upper()} omitiendo {size} pares.")
+                except ValueError as e:
+                    messagebox.showerror("Error", str(e))
+                    return
+            else:
+                messagebox.showwarning("Advertencia", "Entrada de stack cancelada.")
+                return
+
+        messagebox.showinfo("Stacks Definidos", "Todos los stacks se definieron con éxito.")
+
+    def validate(self):
+        if not self.stacks:
+            messagebox.showwarning("Advertencia", "Debe definir los stacks antes de validar.")
+            return
+
+        errors = validate_lines(self.lines, self.ids, self.stacks)
+
+        if not errors:
+            messagebox.showinfo("Validación Completa", "No se encontraron errores.")
+        else:
+            self.show_error_report(errors)
+
+    def show_error_report(self, errors):
+        report_window = tk.Toplevel(self.root)
+        report_window.title("Reporte de Errores")
+
+        # Crear un ScrolledText para mostrar el reporte
+        text_area = scrolledtext.ScrolledText(report_window, width=80, height=20, wrap=tk.WORD)
+        text_area.pack(padx=10, pady=10)
+
+        # Agregar los errores al reporte
+        for error in errors:
+            id_hex = hex(error[0]).upper()
+            line_num = error[1]
+            text_area.insert(tk.END, f"ID {id_hex} (Línea {line_num}): Error encontrado\n")
+
+        # Deshabilitar la edición del texto en el ScrolledText
+        text_area.config(state=tk.DISABLED)
+
+def main():
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
+    
